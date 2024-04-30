@@ -1,0 +1,118 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: ""
+date: "2024-04-28"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+```
+
+Get the NYPD shooting incident data.
+
+```{r get_data}
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+nypd_sid <- read_csv(url_in)
+```
+
+This dataset contains many columns that I'm not interested in exploring right now, so I'm going to remove them.
+
+```{r tidy_data}
+nypd_sid <- nypd_sid %>%
+  select(-c(JURISDICTION_CODE, PRECINCT, LOC_CLASSFCTN_DESC, LOC_OF_OCCUR_DESC, LOCATION_DESC))
+```
+
+```{r tidy_two}
+nypd_sid <- nypd_sid %>%
+  select(-c(X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat, INCIDENT_KEY, STATISTICAL_MURDER_FLAG, PERP_RACE, VIC_RACE))
+```
+
+The dates are formatted as characters, so I'll convert them into proper dates.
+
+```{r correct_dates}
+nypd_sid <- nypd_sid %>%
+  mutate(OCCUR_DATE = as.Date(OCCUR_DATE, format = "%m/%d/%Y"))
+```
+
+I want to figure out which age group has the most victims of shooting incidents in NYPD. So, I need to count the total number of victims and use the age group values as categories.
+
+```{r}
+total_vic <- nrow(nypd_sid$VIC_AGE_GROUP)
+
+nypd_sid$VIC_AGE_GROUP <- as.factor(nypd_sid$VIC_AGE_GROUP)
+```
+
+Let's visualize!
+
+```{r visual_1}
+nypd_sid %>% 
+  ggplot(aes(x = VIC_AGE_GROUP)) +
+  geom_bar(fill = "blue", color = "black") +
+  labs(title = "Age ranges of shooting incident victims in NY",
+       x = "Victim age group",
+       y = "Number of victims")+
+  theme_minimal() 
+```
+The age group that is most frequently impacted by NY shooting incidents are those in the 25-44 year-old range.
+
+I'm going to convert the time data into categorical time data for a heat map comparison.
+
+```{r categorize_time}
+nypd_sid$OCCUR_TIME <- ifelse(hour(nypd_sid$OCCUR_TIME) %in% 0:5, "Night",
+                    ifelse(hour(nypd_sid$OCCUR_TIME) %in% 6:11, "Morning",
+                      ifelse(hour(nypd_sid$OCCUR_TIME) %in% 12:17, "Afternoon",
+                             "Evening")))
+```
+
+I need to count the occurences in each category for comparison.
+
+```{r counts}
+counts <- nypd_sid %>%
+  group_by(VIC_AGE_GROUP, OCCUR_TIME) %>%
+  summarise(Count = n(), .groups = 'drop')
+
+head(counts)
+```
+
+```{r visual_2}
+counts %>%
+ggplot(aes(x = VIC_AGE_GROUP, y = OCCUR_TIME, fill = Count))+
+  geom_tile()+
+  scale_fill_gradient(low = "blue", high = "red")+
+  labs(title = "Heatmap of victim age and incident occurence",
+       x= "Time of day",
+       y = "Victim age group",
+       fill = "Count")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+The highest concentration of victims are in the age groups 18-24 and 25-44.
+
+```{r model}
+mod <- lm(Count ~ VIC_AGE_GROUP + OCCUR_TIME, data = counts)
+summary(mod)
+```
+Now I'll attempt to predict the number of victims based on each given age range.
+
+```{r make_predict}
+counts %>% mutate(pred = predict(mod))
+counts_w_pred <- counts %>% mutate(pred = predict(mod))
+```
+
+```{r plot_count_pred}
+counts_w_pred %>%
+  ggplot() +
+  geom_point(aes(x = VIC_AGE_GROUP, y = Count), color = "blue") +
+  geom_point(aes(x = VIC_AGE_GROUP, y = pred), color = "red")
+```
+Biases:
+
+Going into this study I held the assumption that most of the victims of shooting incidents would be people in their 20s late at night. 
+
+Although the highest concentration of shooting incidents took place in the evening and at night, the age range of 25-44 is too broad to give an accurate picture of if the majority of victims were in their 20s.I tried to mitigate this bias by allowing the data to lead the way. This data also might be skewed towards 18-44 year-olds because there is a larger population of them in NYC.
